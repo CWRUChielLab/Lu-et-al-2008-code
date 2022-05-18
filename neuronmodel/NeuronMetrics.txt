@@ -1,0 +1,3 @@
+Length constant: passive channels in soma, passive + active in axon:
+Large (100 um soma radius, 10 um axon radius): 590.2
+Small (50 um soma radius, 5 um axon radius): 417.3
