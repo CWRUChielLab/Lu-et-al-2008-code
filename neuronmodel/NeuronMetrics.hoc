@@ -1,0 +1,202 @@
+load_file("nrngui.hoc")
+
+//
+// general settings
+//
+
+
+// frequently changed parameters
+
+strdef file_prefix
+file_prefix = "small "
+
+stim_duration = 10
+
+stim_electrode_min_y = 0
+stim_electrode_max_y = 0
+stim_electrode_y_steps = 1
+
+stim_electrode_min_x = -1000
+stim_electrode_max_x = -200
+stim_electrode_x_steps = 1
+
+
+// less frequently changed parameters
+stim_delay = 10
+simulation_duration = 30
+max_extracellular_current = 0
+min_extracellular_current = 0 
+max_search_depth = 1 
+soma_radius = 100
+axon_length = 10000
+axon_radius = 10
+num_soma_segs = 100
+num_axon_segs = 10000 
+
+create soma
+create axon
+//[num_axon_sections]
+access soma
+
+soma.nseg = num_soma_segs
+soma.diam = 2*soma_radius
+soma.L = 2*soma_radius 
+soma.Ra = 123.0
+soma insert pas
+//soma insert hh
+soma insert extracellular
+
+axon.nseg = num_axon_segs
+axon.diam = 2*axon_radius
+axon.L = axon_length
+axon.Ra = 123
+axon insert hh
+axon insert extracellular
+
+axon pt3dclear()
+axon pt3dadd(soma_radius, 0, 0, 2*axon_radius)
+axon pt3dadd(soma_radius + axon_length, 0, 0, 2*axon_radius)
+
+proc setSomaOrientation() {
+	axon disconnect()
+
+	soma pt3dclear()
+	for i = 0, num_soma_segs-1 {
+		s = soma_radius * (2*(i + 1/2)/num_soma_segs - 1)
+		radius = sqrt(soma_radius^2 - s^2)
+		//if (s > 0 && radius < axon_radius) {
+		//	radius = axon_radius
+		//}
+		soma pt3dadd(s*cos($1), s*sin($1), 0,2*radius)
+	}
+
+	connect axon(0), soma(cos($1)/2 + 1/2)
+} 
+
+// sets the soma orientation to point directly away from the stimulus
+proc updateSomaOrientation() {
+	setSomaOrientation(atan2(-stim_electrode_y, -stim_electrode_x))
+}
+
+proc setstim() {
+	// the soma has one 3d point per segment...
+	for i = 0, num_soma_segs-1 {
+		//x = soma_radius * (2*(i + 1/2)/num_soma_segs - 1)
+		soma x = x3d(i)
+		soma y = y3d(i) 
+		soma radius = diam3d(i)/2
+		soma e_extracellular((i+1/2)/num_soma_segs) = $1/sqrt((x-stim_electrode_x)^2 + (y-stim_electrode_y)^2 + radius^2)
+	}
+
+	// whereas the axon has 2 3d points per section...
+	for i = 0, num_axon_segs-1 {
+		// x = soma_radius + axon_length * (i + 1/2)/num_axon_segs
+		axon x =  (x3d(1) - x3d(0)) * (i + 1/2)/num_axon_segs + x3d(0)
+		axon e_extracellular((i+1/2)/num_axon_segs) = $1/sqrt((x-stim_electrode_x)^2 + stim_electrode_y^2 + axon_radius^2) 
+	}
+}
+
+objectvar spikerecorder, nil
+axon spikerecorder = new NetCon(&v(0.01),nil)
+spikerecorder.record("recordspike()")
+proc recordspike() {
+	spike_detected = 1
+}
+
+objectvar testStimulation
+axon testStimulation = new SEClamp(0.0)
+testStimulation.dur1 = 1e9
+testStimulation.amp1 = -65.1
+testStimulation.rs = 1e-9
+
+// /////////////////////////////////////////////////////////////
+// the following function was borrowed and modified from Sabrina's code:
+objectvar new_graph 
+
+proc addgraph() { 
+	new_graph = new Graph()
+	new_graph.size(0,simulation_duration,$2,$3)
+	new_graph.xaxis()
+	new_graph.yaxis()
+	new_graph.addvar($s1,1,0)
+	new_graph.save_name("graphList[0].")
+	graphList[0].append(new_graph)
+}
+// /////////////////////////////////////////////////////////////
+
+addgraph("axon.v(0.01)",-90,30)
+
+proc run_sim() {
+//soma psection()
+	spike_detected=0
+	
+	tstop = stim_delay
+	setstim(0)
+	run()
+
+	setstim(extracellular_current)
+	continuerun(stim_delay + stim_duration)
+
+	setstim(0)
+	continuerun(simulation_duration)
+}
+
+strdef output_file_name
+
+sprint(output_file_name, "%sThreshold x %d to %d in %d steps y %d to %d in %d steps.csv", \
+	file_prefix, stim_electrode_min_x, stim_electrode_max_x, stim_electrode_x_steps, \
+	stim_electrode_min_y, stim_electrode_max_y, stim_electrode_y_steps)
+//wopen(output_file_name)
+
+// write out the header line (containing the distances used) to the output file...
+fprint("%g", stim_electrode_min_x)
+for x_step = 1, stim_electrode_x_steps-1 {
+	stim_electrode_x = (stim_electrode_max_x - stim_electrode_min_x)*x_step/(stim_electrode_x_steps-1) + stim_electrode_min_x
+//	fprint(",%g", stim_electrode_x)
+}
+
+for y_step = 0, stim_electrode_y_steps-1 {
+	if (stim_electrode_y_steps > 1) {
+		stim_electrode_y = (stim_electrode_max_y - stim_electrode_min_y)*y_step/(stim_electrode_y_steps-1) + stim_electrode_min_y
+	} else {
+		stim_electrode_y = stim_electrode_min_y
+	}
+	
+//	fprint("\n%g", stim_electrode_y)
+
+	for x_step = 0, stim_electrode_x_steps-1 {
+		if (stim_electrode_x_steps > 1) {
+			stim_electrode_x = (stim_electrode_max_x - stim_electrode_min_x)*x_step/(stim_electrode_x_steps-1) + stim_electrode_min_x
+		} else {
+			stim_electrode_x = stim_electrode_min_x
+		}
+		print "Testing position (", stim_electrode_x, ", ", stim_electrode_y, ")"
+
+		updateSomaOrientation()		
+		max_current = max_extracellular_current
+		min_current = min_extracellular_current
+		extracellular_current = (max_current - min_current)/2 + min_current
+		for bin_search_depth=1, max_search_depth {
+			run_sim() 
+
+			if (spike_detected == 0) {
+				print "\tcurrent: ", extracellular_current, "\tNo spike detected"
+				min_current = extracellular_current
+			} else {
+				print "\tcurrent: ", extracellular_current, "\tSpike detected"
+				max_current = extracellular_current
+			}
+			extracellular_current = (max_current - min_current)/2 + min_current
+		}
+//		fprint(",%g", extracellular_current)
+		print "Threshold at position (", stim_electrode_x, ", ", stim_electrode_y, ") is ", extracellular_current
+	}
+}
+
+for x_step = 1, 20 {
+	print "at ", x_step/1000, ":\t", axon_length/1000/-log((axon.v(0.5) - axon.v(x_step/1000))/(axon.v(0.5) - axon.v((x_step-1)/1000)))
+}
+
+
+//wopen()
+quit()
